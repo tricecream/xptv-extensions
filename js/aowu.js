@@ -290,128 +290,65 @@ async function search(ext) {
     try {
         ext = argsify(ext)
         let cards = []
-        // const ocrApi = 'https://api.nn.ci/ocr/b64/json'
-        // let cookie = 'PHPSESSID=' + generatePHPSESSID()
-
-        let text = encodeURIComponent(ext.text)
+        let text = encodeURIComponent(ext.text || ext.wd || '')
         let page = ext.page || 1
-        if (page > 1) {
-            return jsonify({
-                list: cards,
-            })
-        }
-
-        // let validate = appConfig.site + '/verify/index.html'
-        let url = appConfig.site + `/search/-------------.html?wd=${text}`
-
-        // let img = await $fetch.download(validate, {
-        //     headers: {
-        //         'User-Agent': UA,
-        //         cookie: cookie,
-        //     },
-        // })
-
-        // function binaryStringToBase64(binaryString) {
-        //     const byteArray = []
-        //     for (let i = 0; i < binaryString.length; i += 8) {
-        //         const byte = binaryString.slice(i, i + 8)
-        //         byteArray.push(parseInt(byte, 2)) // convert 8 bits to a byte
-        //     }
-
-        //     const uint8Array = new Uint8Array(byteArray)
-        //     const wordArray = CryptoJS.lib.WordArray.create(uint8Array)
-        //     return CryptoJS.enc.Base64.stringify(wordArray)
-        // }
-
-        // let b64 = binaryStringToBase64(img.data)
-
-        // let ocrRes = await $fetch.post(ocrApi, b64, {
-        //     headers: {
-        //         'User-Agent': UA,
-        //         cookie: cookie,
-        //     },
-        // })
-        // let vd = argsify(ocrRes.data).result
-
-        // let validateRes = await $fetch.post(
-        //     appConfig.site + `/index.php/ajax/verify_check?type=search&verify=${vd}`,
-        //     '',
-        //     {
-        //         headers: {
-        //             'user-agent': UA,
-        //             cookie: cookie,
-        //             referer: url,
-        //             'x-request-with': 'XMLHttpRequest',
-        //             'sec-fetch-site': 'same-origin',
-        //             origin: appConfig.site,
-        //             'sec-fetch-mode': 'cors',
-        //             'sec-fetch-dest': 'empty',
-        //         },
-        //     }
-        // )
-
-        // if (argsify(validateRes.data).msg === 'ok') {
-        //     let searchRes = await $fetch.get(url, {
-        //         headers: {
-        //             'user-agent': UA,
-        //             cookie: cookie,
-        //         },
-        //     })
-        //     let html = searchRes.data
-
-        //     const $ = cheerio.load(html)
-
-        //     $('.search-box').each((_, element) => {
-        //         const href = $(element).find('.left .public-list-exp').attr('href')
-        //         const title = $(element).find('.thumb-content .thumb-txt').text()
-        //         const cover = $(element).find('.left img').attr('data-src')
-        //         const subTitle = $(element).find('.left .public-list-prb').text()
-        //         cards.push({
-        //             vod_id: href,
-        //             vod_name: title,
-        //             vod_pic: cover,
-        //             vod_remarks: subTitle,
-        //             ext: {
-        //                 id: href.match(/play\/(.+)-1-1\.html/)[1],
-        //             },
-        //         })
-        //     })
-
-        //     return jsonify({
-        //         list: cards,
-        //     })
-        // }
-        let searchRes = await $fetch.get(url, {
+        
+        // 使用 API 搜索
+        const time = Math.round(new Date() / 1000)
+        const key = CryptoJS.MD5('DS' + time + 'DCC147D11943AF75').toString()
+        
+        const body = `wd=${text}&page=${page}&time=${time}&key=${key}`
+        
+        let resp = await $fetch.post('https://www.aowu.tv/index.php/ds_api/vod', body, {
             headers: {
-                'user-agent': UA,
-                // cookie: cookie,
+                'User-Agent': UA,
+                'Content-Type': 'application/x-www-form-urlencoded',
             },
         })
-        let html = searchRes.data
-
-        const $ = cheerio.load(html)
-
-        $('.vod-detail').each((_, element) => {
-            const href = $(element).find('.detail-info > a').attr('href')
-            const title = $(element).find('.detail-pic img').attr('alt')
-            const cover = $(element).find('.detail-pic img').attr('data-src')
-            const subTitle = $(element).find('.slide-info-remarks.cor5').text()
-            cards.push({
-                vod_id: href,
-                vod_name: title,
-                vod_pic: cover,
-                vod_remarks: subTitle,
-                ext: {
-                    url: appConfig.site + href,
-                },
-            })
-        })
-
+        
+        let data = resp.data
+        
+        // 检查是否需要 cookie 验证
+        if (data.includes('fl_js_validator') && data.includes('document.cookie')) {
+            let cookieMatch = data.match(/document\.cookie\s*=\s*"([^"]+)"/)
+            if (cookieMatch) {
+                let cookieStr = cookieMatch[1]
+                resp = await $fetch.post('https://www.aowu.tv/index.php/ds_api/vod', body, {
+                    headers: {
+                        'User-Agent': UA,
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Cookie': cookieStr,
+                    },
+                })
+                data = resp.data
+            }
+        }
+        
+        try {
+            let result = JSON.parse(data)
+            if (result.list && result.list.length > 0) {
+                result.list.forEach((e) => {
+                    cards.push({
+                        vod_id: e.vod_id.toString(),
+                        vod_name: e.vod_name,
+                        vod_pic: e.vod_pic,
+                        vod_remarks: e.vod_remarks || '',
+                        ext: {
+                            url: appConfig.site + e.url,
+                        },
+                    })
+                })
+            }
+        } catch (e) {
+            $print('JSON parse error:', e)
+        }
+        
         return jsonify({
             list: cards,
         })
     } catch (error) {
         $print(error)
+        return jsonify({list: []})
     }
 }
 
