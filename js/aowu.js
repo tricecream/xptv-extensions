@@ -293,16 +293,15 @@ async function search(ext) {
         let text = encodeURIComponent(ext.text || ext.wd || '')
         let page = ext.page || 1
         
-        // 使用 API 搜索
-        const time = Math.round(new Date() / 1000)
-        const key = CryptoJS.MD5('DS' + time + 'DCC147D11943AF75').toString()
+        // 使用正确的搜索URL
+        let url = `https://www.aowu.tv/vods/?wd=${text}`
+        if (page > 1) {
+            url += `&page=${page}`
+        }
         
-        const body = `wd=${text}&page=${page}&time=${time}&key=${key}`
-        
-        let resp = await $fetch.post('https://www.aowu.tv/index.php/ds_api/vod', body, {
+        let resp = await $fetch.get(url, {
             headers: {
                 'User-Agent': UA,
-                'Content-Type': 'application/x-www-form-urlencoded',
             },
         })
         
@@ -313,10 +312,11 @@ async function search(ext) {
             let cookieMatch = data.match(/document\.cookie\s*=\s*"([^"]+)"/)
             if (cookieMatch) {
                 let cookieStr = cookieMatch[1]
-                resp = await $fetch.post('https://www.aowu.tv/index.php/ds_api/vod', body, {
+                let sep = url.includes('?') ? '&' : '?'
+                let noCacheUrl = url + '&_t=' + Date.now()
+                resp = await $fetch.get(noCacheUrl, {
                     headers: {
                         'User-Agent': UA,
-                        'Content-Type': 'application/x-www-form-urlencoded',
                         'Cookie': cookieStr,
                     },
                 })
@@ -324,24 +324,34 @@ async function search(ext) {
             }
         }
         
-        try {
-            let result = JSON.parse(data)
-            if (result.list && result.list.length > 0) {
-                result.list.forEach((e) => {
-                    cards.push({
-                        vod_id: e.vod_id.toString(),
-                        vod_name: e.vod_name,
-                        vod_pic: e.vod_pic,
-                        vod_remarks: e.vod_remarks || '',
-                        ext: {
-                            url: appConfig.site + e.url,
-                        },
-                    })
+        // 检查是否是 JSON 字符串形式的 HTML
+        if (typeof data === 'string' && data.startsWith('"') && data.endsWith('"')) {
+            try {
+                data = JSON.parse(data)
+            } catch (e) {}
+        }
+        
+        const $ = cheerio.load(data)
+        
+        // 解析搜索结果
+        $('.public-list-box, .module-item, .vod-detail').each((_, element) => {
+            const href = $(element).find('a').attr('href')
+            const title = $(element).find('img').attr('alt') || $(element).find('.title, .name, h3, .thumb-txt').text()
+            const cover = $(element).find('img').attr('data-src') || $(element).find('img').attr('src')
+            const remarks = $(element).find('.public-list-prb, .remarks, .score, .tag').text()
+            
+            if (href && title) {
+                cards.push({
+                    vod_id: href,
+                    vod_name: title.trim(),
+                    vod_pic: cover || '',
+                    vod_remarks: remarks ? remarks.trim() : '',
+                    ext: {
+                        url: appConfig.site + href,
+                    },
                 })
             }
-        } catch (e) {
-            $print('JSON parse error:', e)
-        }
+        })
         
         return jsonify({
             list: cards,
