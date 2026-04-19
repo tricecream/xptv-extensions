@@ -1,3 +1,11 @@
+async function getLocalInfo(ext) {
+    return jsonify({
+        ver: 20240413,
+        name: 'aowu',
+        site: 'https://www.aowu.tv'
+    });
+}
+
 const cheerio = createCheerio()
 const CryptoJS = createCryptoJS()
 
@@ -89,11 +97,43 @@ async function getTracks(ext) {
     let list = []
     let url = ext.url
 
-    const { data } = await $fetch.get(url, {
+    // 先请求页面，可能返回 cookie 验证
+    let resp = await $fetch.get(url, {
         headers: {
             'User-Agent': UA,
         },
     })
+    
+    let data = resp.data
+    
+    // 检查是否需要 cookie 验证
+    if (data.includes('fl_js_validator') && data.includes('document.cookie')) {
+        // 从响应中提取 cookie
+        let cookieMatch = data.match(/document\.cookie\s*=\s*"([^"]+)"/)
+        if (cookieMatch) {
+            let cookieStr = cookieMatch[1]
+            // 添加随机参数避免缓存
+            let sep = url.includes('?') ? '&' : '?'
+            let noCacheUrl = url + sep + '_t=' + Date.now()
+            // 带上 cookie 重新请求
+            resp = await $fetch.get(noCacheUrl, {
+                headers: {
+                    'User-Agent': UA,
+                    'Cookie': cookieStr,
+                },
+            })
+            data = resp.data
+        }
+    }
+    
+    // 检查是否是 JSON 字符串形式的 HTML
+    if (typeof data === 'string' && data.startsWith('"') && data.endsWith('"')) {
+        try {
+            data = JSON.parse(data)
+        } catch (e) {
+            // 如果解析失败，保持原样
+        }
+    }
 
     const $ = cheerio.load(data)
 
@@ -136,13 +176,45 @@ async function getTracks(ext) {
 
 async function getPlayinfo(ext) {
     ext = argsify(ext)
-    const url = ext.url
+    let url = ext.url
 
-    const { data } = await $fetch.get(url, {
+    // 先请求页面，可能返回 cookie 验证
+    let resp = await $fetch.get(url, {
         headers: {
             'User-Agent': UA,
         },
     })
+    
+    let data = resp.data
+    
+    // 检查是否需要 cookie 验证
+    if (data.includes('fl_js_validator') && data.includes('document.cookie')) {
+        // 从响应中提取 cookie
+        let cookieMatch = data.match(/document\.cookie\s*=\s*"([^"]+)"/)
+        if (cookieMatch) {
+            let cookieStr = cookieMatch[1]
+            // 添加随机参数避免缓存
+            let sep = url.includes('?') ? '&' : '?'
+            let noCacheUrl = url + sep + '_t=' + Date.now()
+            // 带上 cookie 重新请求
+            resp = await $fetch.get(noCacheUrl, {
+                headers: {
+                    'User-Agent': UA,
+                    'Cookie': cookieStr,
+                },
+            })
+            data = resp.data
+        }
+    }
+    
+    // 检查是否是 JSON 字符串形式的 HTML
+    if (typeof data === 'string' && data.startsWith('"') && data.endsWith('"')) {
+        try {
+            data = JSON.parse(data)
+        } catch (e) {
+            // 如果解析失败，保持原样
+        }
+    }
 
     try {
         const $ = cheerio.load(data)
@@ -150,12 +222,34 @@ async function getPlayinfo(ext) {
         let purl = config.url
         if (config.encrypt == 2) purl = unescape(base64Decode(purl))
         const artPlayer = appConfig.site + `/player/?url=${purl}`
-        const { data: artRes } = await $fetch.get(artPlayer, {
+        
+        // 请求播放器页面，也需要处理 cookie 验证
+        let artResp = await $fetch.get(artPlayer, {
             headers: {
                 'User-Agent': UA,
                 Referer: url,
             },
         })
+        
+        let artRes = artResp.data
+        
+        // 检查播放器页面是否需要 cookie 验证
+        if (artRes && artRes.includes('fl_js_validator') && artRes.includes('document.cookie')) {
+            let cookieMatch = artRes.match(/document\.cookie\s*=\s*"([^"]+)"/)
+            if (cookieMatch) {
+                let cookieStr = cookieMatch[1]
+                let sep = artPlayer.includes('?') ? '&' : '?'
+                let noCacheUrl = artPlayer + sep + '_t=' + Date.now()
+                artResp = await $fetch.get(noCacheUrl, {
+                    headers: {
+                        'User-Agent': UA,
+                        'Cookie': cookieStr,
+                        Referer: url,
+                    },
+                })
+                artRes = artResp.data
+            }
+        }
 
         if (artRes) {
             function decryptAES(ciphertext, key) {
@@ -174,11 +268,16 @@ async function getPlayinfo(ext) {
                     return null
                 }
             }
-            const sessionKey = artRes.match(/const sessionKey\s=\s"([^"]+)"/)[1]
-            const encryptedUrl = artRes.match(/const encryptedUrl\s=\s"([^"]+)"/)[1]
-            const realUrl = decryptAES(encryptedUrl, sessionKey)
-
-            return jsonify({ urls: [realUrl] })
+            
+            let sessionKeyMatch = artRes.match(/const sessionKey\s=\s"([^"]+)"/)
+            let encryptedUrlMatch = artRes.match(/const encryptedUrl\s=\s"([^"]+)"/)
+            
+            if (sessionKeyMatch && encryptedUrlMatch) {
+                const sessionKey = sessionKeyMatch[1]
+                const encryptedUrl = encryptedUrlMatch[1]
+                const realUrl = decryptAES(encryptedUrl, sessionKey)
+                return jsonify({ urls: [realUrl] })
+            }
         }
     } catch (error) {
         $print(error)
